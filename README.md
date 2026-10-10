@@ -8,8 +8,23 @@ nothing to install first.
 
 ## Using it
 
-Download `CraftWerk-Manager.zip`, unblock and extract it, and run `CraftWerk Setup.cmd`.
+**Windows:** download `CraftWerk-Manager.zip`, unblock and extract it, and run `CraftWerk Setup.cmd`.
 The zip's `README.txt` has the end-user steps.
+
+**Linux:** download `craftwerk.sh` and run `bash craftwerk.sh` for a menu, or use commands:
+
+```sh
+bash craftwerk.sh list                    # what's installed and what's available
+bash craftwerk.sh install photocraft wordcraft
+bash craftwerk.sh install photocraft@0.5.0   # a specific version
+bash craftwerk.sh update                  # update everything installed
+bash craftwerk.sh rollback photocraft
+bash craftwerk.sh schedule on             # weekly updates (systemd timer, or cron)
+```
+
+It needs only `bash`, `curl`, `tar` and `sha256sum`, and installs to `~/.local` without root
+(`--system` installs to `/usr/local`). Each release's Linux tarball is a ready-made prefix, so
+the menu entries, icons and file types come with it. Settings in your home folder are never touched.
 
 ## Layout
 
@@ -21,6 +36,7 @@ The zip's `README.txt` has the end-user steps.
 | `tools/register-apps.ps1` | File types, Default apps entries and Start menu shortcuts, per user, no admin. |
 | `tools/setup-schedule.ps1` | The weekly scheduled task, and a first update check. |
 | `build-package.ps1` | Builds `dist/CraftWerk-Manager.zip`. |
+| `linux/craftwerk.sh` | The Linux version: one bash script with the same commands, a menu, and a systemd or cron schedule. |
 
 On install, `tools/` and the window are copied to `<install folder>\_update`, which is where the
 weekly task runs them from.
@@ -36,7 +52,12 @@ weekly task runs them from.
 
 ## Testing
 
-There's no test suite yet. `CraftWerk-Manager.ps1 -SelfTest -SelfTestApps <ids> -SelfTestAction install|remove|rollback`
+There's no test suite yet. The Linux script's download, checksum, unpack, update, rollback and
+remove logic was exercised against real releases using Git Bash on Windows. Not yet run on a real
+Linux machine: the systemd/cron schedule, the whiptail menu, desktop-database refresh, the
+missing-library check and running-app detection.
+
+On Windows: `CraftWerk-Manager.ps1 -SelfTest -SelfTestApps <ids> -SelfTestAction install|remove|rollback`
 drives the real window's buttons without showing it, against `-Root <scratch folder>`; it leaves file
 associations and the weekly task alone. `update-craftwerk.ps1` has no side effects without `-Apply`.
 

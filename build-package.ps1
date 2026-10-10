@@ -17,6 +17,12 @@ Copy-Item (Join-Path $Src 'CraftWerk Setup.cmd') $Stage
 Copy-Item (Join-Path $Src 'tools\*') (Join-Path $Stage 'tools')
 Copy-Item (Join-Path $Src 'package\README.txt') $Stage
 
+# batch files can misbehave with Unix line endings, so the ones in the zip always have Windows endings
+foreach ($c in Get-ChildItem $Stage -Recurse -Filter *.cmd) {
+    $text = (Get-Content $c.FullName -Raw) -replace "`r?`n", "`r`n"
+    [IO.File]::WriteAllText($c.FullName, $text, (New-Object Text.ASCIIEncoding))
+}
+
 # Compress-Archive in Windows PowerShell 5.1 writes backslashes in entry names, which other unzip tools reject
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($Zip, 'Create')
