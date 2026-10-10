@@ -76,8 +76,29 @@ function Log([string]$msg) {
 }
 
 function Get-Latest([string]$app) {
-    $r = Invoke-RestMethod "https://api.github.com/repos/$Owner/$app/releases/latest" -Headers $Headers
-    return $r
+    try {
+        if ($env:CRAFTWERK_FORCE_FALLBACK) { throw 'fallback forced (test hook)' }
+        return Invoke-RestMethod "https://api.github.com/repos/$Owner/$app/releases/latest" -Headers $Headers
+    } catch {
+        # The API allows 60 lookups an hour per IP address, which a shared network can use up. The plain
+        # release page redirects to the latest tag and has no such limit; the files in a release are named
+        # <app>-<version>-<platform>.zip and SHA256SUMS.txt, so their addresses follow from the tag.
+        # (Invoke-WebRequest throws on the redirect without exposing its headers; HttpWebRequest returns it.)
+        $req = [Net.HttpWebRequest]::Create("https://github.com/$Owner/$app/releases/latest")
+        $req.AllowAutoRedirect = $false; $req.UserAgent = $Headers['User-Agent']; $req.Timeout = 20000
+        $resp = $req.GetResponse()
+        try { $tag = ($resp.Headers['Location'] -split '/')[-1] } finally { $resp.Close() }
+        if (-not $tag) { throw }
+        $ver = $tag.TrimStart('v')
+        $base = "https://github.com/$Owner/$app/releases/download/$tag"
+        Log "${app}: GitHub's API is unavailable, using the release page instead"
+        return [pscustomobject]@{
+            tag_name = $tag
+            assets   = @(
+                [pscustomobject]@{ name = "$app-$ver-$Platform.zip"; browser_download_url = "$base/$app-$ver-$Platform.zip" }
+                [pscustomobject]@{ name = 'SHA256SUMS.txt';          browser_download_url = "$base/SHA256SUMS.txt" })
+        }
+    }
 }
 
 function Get-Release([string]$app, [string]$ver) {
@@ -159,8 +180,13 @@ function Register-Retry {
     Register-ScheduledTask -TaskName $RetryTaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 }
 
-function Test-Running($app) {
-    $p = Get-Process -Name $app, "$app-cli" -ErrorAction SilentlyContinue
+# Is this copy of the app running? Matches on the folder the program runs from, so a copy of the same
+# app running somewhere else doesn't block this one.
+function Test-Running($app, $dir) {
+    $p = Get-Process -Name $app, "$app-cli" -ErrorAction SilentlyContinue | Where-Object {
+        $path = try { $_.Path } catch { $null }
+        $path -and $path.StartsWith($dir.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+    }
     if ($p) { Log "${app}: running, close it and run again. Skipped."; return $true }
     return $false
 }
@@ -185,8 +211,8 @@ if ($PSCmdlet.ParameterSetName -eq 'Rollback') {
     $prev = Join-Path $Previous $app
     if (-not $cur) { Log "rollback ${app}: not found in $Root"; exit 1 }
     if (-not (Test-Path $prev)) { Log "rollback ${app}: no previous version saved"; exit 1 }
-    if (Test-Running $app) { exit 1 }
-    $prevFiles = Get-ChildItem $prev -Recurse -File | ForEach-Object { $_.FullName.Substring($prev.Length).TrimStart('\') }
+    if (Test-Running $app $cur.Dir) { exit 1 }
+    $prevFiles =Get-ChildItem $prev -Recurse -File | ForEach-Object { $_.FullName.Substring($prev.Length).TrimStart('\') }
     $swap = Join-Path $Staging "$app-swap"
     if (Test-Path $swap) { Remove-Item $swap -Recurse -Force }
     Copy-Tree $cur.Dir $swap $prevFiles     # current copies of the files we're about to restore
@@ -218,7 +244,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Uninstall') {
     $app = $Uninstall.ToLower()
     $cur = Get-InstalledApps | Where-Object Name -eq $app
     if (-not $cur) { Log "uninstall ${app}: not found in $Root"; exit 1 }
-    if (Test-Running $app) { exit 1 }
+    if (Test-Running $app $cur.Dir) { exit 1 }
     if ($KeepData) {
         # remove only what a release puts in the folder; settings, data folders and your own files stay
         Get-ChildItem $cur.Dir -File -Force | Where-Object { $_.Name -match '(?i)^(.+\.(exe|dll)|LICENSE-.+|NOTICE|OFL-.+\.txt|README\.md|ATTRIBUTION.*|portable\.txt)$' } | Remove-Item -Force
@@ -284,7 +310,7 @@ foreach ($a in Get-InstalledApps) {
         $new = $latest.tag_name.TrimStart('v')
         if ([version]$new -le [version]$a.Version -and -not $Force) { Log "$($a.Name) $($a.Version): up to date"; continue }
         if (-not $Apply) { Log "$($a.Name): $($a.Version) -> $new available"; continue }
-        if (Test-Running $a.Name) { continue }
+        if (Test-Running $a.Name $a.Dir) { continue }
 
         $pkg = Get-VerifiedPackage $a.Name $latest
         if (-not $pkg) { continue }

@@ -109,7 +109,10 @@ $Ids = @($Apps.Keys | Where-Object { -not $Only -or $_ -in $Only })
 
 if ($Remove) {
     foreach ($id in $Ids) { Unregister-App $id $Apps[$id] }
-    if (-not $Only) { Remove-Item "HKCU:\$CapBase" -Recurse -Force -ErrorAction SilentlyContinue }
+    if (-not $Only) {
+        Remove-Item "HKCU:\$CapBase" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $Programs 'CraftWerk Manager.lnk') -Force -ErrorAction SilentlyContinue   # made by the window
+    }
     [Win32.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Write-Host 'All Craft apps unregistered.'
     return

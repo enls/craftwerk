@@ -33,6 +33,7 @@ $InInstall = (Split-Path $Here -Leaf) -eq '_update'
 $ToolsSrc  = if ($InInstall) { $Here } else { Join-Path $Here 'tools' }
 if (-not $Root) { $Root = if ($InInstall) { Split-Path $Here -Parent } else { 'C:\CraftWerk' } }
 
+$Version  = '0.1.1'
 $Owner    = 'storytold'
 $Headers  = @{ 'User-Agent' = 'craftwerk-manager' }
 $TaskName = 'CraftWerk updater'
@@ -58,17 +59,28 @@ $Catalog = [ordered]@{
 # one place for everything that changes while the window runs (handlers can't assign script variables)
 $State = @{ Root = $Root; Busy = $false; Info = @{}; TaskExists = $false; Proc = $null; LogPath = $null; LogPos = 0; Queue = $null }
 
-function Get-AppDir($id)  { Join-Path $State.Root ($id.Substring(0,1).ToUpper() + $id.Substring(1)) }
-function Get-Updater      { Join-Path $State.Root '_update\update-craftwerk.ps1' }
+# [IO.Path]::Combine, not Join-Path: Join-Path throws on a drive letter that doesn't exist, and a
+# mistyped install folder should just show "Not installed"
+function Get-AppDir($id)  { [IO.Path]::Combine($State.Root, $id.Substring(0,1).ToUpper() + $id.Substring(1)) }
+function Get-Updater      { [IO.Path]::Combine($State.Root, '_update\update-craftwerk.ps1') }
 
 function Get-InstalledVersion($id) {
-    $exe = Join-Path (Get-AppDir $id) "$id.exe"
+    $exe = [IO.Path]::Combine((Get-AppDir $id), "$id.exe")
     if (Test-Path $exe) { return (Get-Item $exe).VersionInfo.ProductVersion }
 }
 
 function Get-LatestVersion($id) {
     try { return (Invoke-RestMethod "https://api.github.com/repos/$Owner/$id/releases/latest" -Headers $Headers -TimeoutSec 15).tag_name.TrimStart('v') }
-    catch { return $null }
+    catch { }
+    # the API allows 60 lookups an hour per IP address, which a shared network can use up; the plain
+    # release page redirects to the latest tag and has no such limit
+    try {
+        $req = [Net.HttpWebRequest]::Create("https://github.com/$Owner/$id/releases/latest")
+        $req.AllowAutoRedirect = $false; $req.UserAgent = $Headers['User-Agent']; $req.Timeout = 15000
+        $resp = $req.GetResponse()
+        try { return ($resp.Headers['Location'] -split '/')[-1].TrimStart('v') } finally { $resp.Close() }
+    } catch { }
+    return $null
 }
 
 function Test-TaskForThisFolder {
@@ -78,11 +90,13 @@ function Test-TaskForThisFolder {
 
 # ---- window ------------------------------------------------------------------------------------
 $form = New-Object Windows.Forms.Form
-$form.Text = 'CraftWerk Manager'
+$form.Text = "CraftWerk Manager $Version"
 $form.Font = New-Object Drawing.Font('Segoe UI', 9)
 $form.StartPosition = 'CenterScreen'
-$form.ClientSize = New-Object Drawing.Size(780, 640)
-$form.MinimumSize = New-Object Drawing.Size(680, 560)
+# fit small or scaled-up screens (a 768-pixel-high laptop screen is common)
+$room = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$form.ClientSize = New-Object Drawing.Size(780, [math]::Min(640, $room.Height - 60))
+$form.MinimumSize = New-Object Drawing.Size(680, [math]::Min(560, $room.Height - 60))
 
 $grid = New-Object Windows.Forms.TableLayoutPanel
 $grid.Dock = 'Fill'; $grid.ColumnCount = 1; $grid.RowCount = 6; $grid.Padding = New-Object Windows.Forms.Padding(12)
@@ -152,6 +166,21 @@ function Add-Output([string]$text) {
     if ($text) { $txtLog.AppendText($text) }
 }
 
+# A path or name inside single quotes in a generated script. Doubles any ' so a folder like O'Brien
+# can't end the string early.
+function Q([string]$s) { "'" + $s.Replace("'", "''") + "'" }
+
+# Errors inside a button's handler are hidden, so show them: in the output box and a message.
+function Invoke-Safe([scriptblock]$action) {
+    try { & $action }
+    catch {
+        Add-Output "Error: $($_.Exception.Message)`r`n"
+        if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show("Something went wrong:`n`n$($_.Exception.Message)", 'CraftWerk Manager', 'OK', 'Error') | Out-Null }
+        $running = $State.Proc -and -not $State.Proc.HasExited
+        if ($State.Busy -and -not $running) { Set-Busy $false 'Ready.' }
+    }
+}
+
 function Set-Busy([bool]$busy, [string]$message) {
     $State.Busy = $busy
     foreach ($c in $btnGo, $btnRemove, $btnRollback, $btnRefresh, $btnBrowse, $txtRoot, $chkRegister, $chkWeekly, $list) { $c.Enabled = -not $busy }
@@ -161,35 +190,44 @@ function Set-Busy([bool]$busy, [string]$message) {
 
 # Rebuilds the list from what's installed. Only installed apps are checked against GitHub.
 function Update-List {
-    $State.Root = $txtRoot.Text.Trim()
+    $typed = $txtRoot.Text.Trim()
+    if (-not $typed) { $typed = 'C:\CraftWerk'; $txtRoot.Text = $typed }
+    if ($typed.Length -gt 3) { $typed = $typed.TrimEnd('\') }     # keep "C:\" whole
+    $State.Root = $typed
     $State.Info = @{}
     Set-Busy $true 'Checking installed apps...'
-    $list.Items.Clear()
-    foreach ($id in $Catalog.Keys) {
-        $item = New-Object Windows.Forms.ListViewItem($Catalog[$id].Name)
-        $item.Tag = $id
-        $installed = Get-InstalledVersion $id
-        $info = @{ Installed = $installed; Latest = $null; Update = $false }
-        if (-not $installed) {
-            $null = $item.SubItems.Add('Not installed')
-        } else {
-            $info.Latest = Get-LatestVersion $id
-            try { $info.Update = $info.Latest -and ([version]$info.Latest -gt [version]$installed) } catch { }
-            $text = if ($info.Update) { "Update available: $installed -> $($info.Latest)" }
-                    elseif ($info.Latest) { "Installed $installed (up to date)" }
-                    else { "Installed $installed (couldn't check for updates)" }
-            $null = $item.SubItems.Add($text)
-            $item.Checked = [bool]$info.Update
+    $message = 'Ready.'
+    try {
+        $list.Items.Clear()
+        foreach ($id in $Catalog.Keys) {
+            $item = New-Object Windows.Forms.ListViewItem($Catalog[$id].Name)
+            $item.Tag = $id
+            $installed = Get-InstalledVersion $id
+            $info = @{ Installed = $installed; Latest = $null; Update = $false }
+            if (-not $installed) {
+                $null = $item.SubItems.Add('Not installed')
+            } else {
+                $info.Latest = Get-LatestVersion $id
+                try { $info.Update = $info.Latest -and ([version]$info.Latest -gt [version]$installed) } catch { }
+                $text = if ($info.Update) { "Update available: $installed -> $($info.Latest)" }
+                        elseif ($info.Latest) { "Installed $installed (up to date)" }
+                        else { "Installed $installed (couldn't check for updates)" }
+                $null = $item.SubItems.Add($text)
+                $item.Checked = [bool]$info.Update
+            }
+            $null = $item.SubItems.Add($Catalog[$id].Desc)
+            $State.Info[$id] = $info
+            $null = $list.Items.Add($item)
+            [Windows.Forms.Application]::DoEvents()
         }
-        $null = $item.SubItems.Add($Catalog[$id].Desc)
-        $State.Info[$id] = $info
-        $null = $list.Items.Add($item)
-        [Windows.Forms.Application]::DoEvents()
+        $State.TaskExists = Test-TaskForThisFolder
+        $chkWeekly.Checked = $State.TaskExists -or -not (Test-Path ([IO.Path]::Combine($State.Root, '_update')))
+        $updates = @($State.Info.Values | Where-Object Update).Count
+        if ($updates) { $message = "$updates update(s) available, ticked in the list." }
+    } finally {
+        # whatever happened above, don't leave every button greyed out
+        Set-Busy $false $message
     }
-    $State.TaskExists = Test-TaskForThisFolder
-    $chkWeekly.Checked = $State.TaskExists -or -not (Test-Path (Join-Path $State.Root '_update'))
-    $updates = @($State.Info.Values | Where-Object Update).Count
-    Set-Busy $false $(if ($updates) { "$updates update(s) available, ticked in the list." } else { 'Ready.' })
 }
 
 # Puts the scripts (and this window) in <install folder>\_update, where the weekly task will find them.
@@ -236,13 +274,15 @@ function Read-NewOutput {
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 300
 $timer.Add_Tick({
-    Read-NewOutput
-    if ($State.Proc.HasExited) {
-        $timer.Stop()
+    Invoke-Safe {
         Read-NewOutput
-        Add-Output "`r`nDone.`r`n"
-        Remove-Item $State.Queue, $State.LogPath -ErrorAction SilentlyContinue
-        Update-List
+        if ($State.Proc.HasExited) {
+            $timer.Stop()
+            Read-NewOutput
+            Add-Output "`r`nDone.`r`n"
+            Remove-Item $State.Queue, $State.LogPath -ErrorAction SilentlyContinue
+            Update-List
+        }
     }
 })
 
@@ -254,72 +294,82 @@ function Confirm-Remove([string]$names) {
 }
 
 $btnBrowse.Add_Click({
-    $dlg = New-Object Windows.Forms.FolderBrowserDialog
-    $dlg.Description = 'Choose the folder the apps live in (or should be installed to)'
-    $dlg.SelectedPath = $txtRoot.Text
-    if ($dlg.ShowDialog() -eq 'OK') { $txtRoot.Text = $dlg.SelectedPath; Update-List }
+    Invoke-Safe {
+        $dlg = New-Object Windows.Forms.FolderBrowserDialog
+        $dlg.Description = 'Choose the folder the apps live in (or should be installed to)'
+        $dlg.SelectedPath = $txtRoot.Text
+        if ($dlg.ShowDialog() -eq 'OK') { $txtRoot.Text = $dlg.SelectedPath; Update-List }
+    }
 })
-$btnRefresh.Add_Click({ Update-List })
+$btnRefresh.Add_Click({ Invoke-Safe { Update-List } })
 
 $btnGo.Add_Click({
-    $updater = Get-Updater
-    $toolsDir = Join-Path $State.Root '_update'
-    $installs = @(); $updates = @()
-    foreach ($id in Get-Checked) {
-        if (-not $State.Info[$id].Installed) { $installs += $id } elseif ($State.Info[$id].Update) { $updates += $id }
+    Invoke-Safe {
+        $updater = Q (Get-Updater)
+        $toolsDir = Join-Path $State.Root '_update'
+        $installs = @(); $updates = @()
+        foreach ($id in Get-Checked) {
+            if (-not $State.Info[$id].Installed) { $installs += $id } elseif ($State.Info[$id].Update) { $updates += $id }
+        }
+        $weeklyChange = $chkWeekly.Checked -ne $State.TaskExists
+        if (-not ($installs -or $updates -or $weeklyChange)) {
+            if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Nothing to do. Tick an app that is not installed or has an update.', 'CraftWerk Manager') | Out-Null }
+            Add-Output "Nothing to do.`r`n"
+            return
+        }
+        Install-Tools
+        $lines = @("`$ErrorActionPreference = 'Continue'")
+        foreach ($id in $installs) {
+            $lines += "Write-Host 'Installing $($Catalog[$id].Name)...'"
+            $lines += "& $updater -Install '$id' -NoRegister"
+        }
+        if ($updates) {
+            $lines += "Write-Host 'Updating...'"
+            $lines += "& $updater -Apply -Only '$($updates -join "','")'"
+        }
+        if ($chkRegister.Checked) {
+            $lines += "Write-Host 'Setting up file types and shortcuts...'"
+            $lines += "& $(Q "$toolsDir\register-apps.ps1")"
+            if (-not $SelfTest) { $lines += "`$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'CraftWerk Manager.lnk')); `$s.TargetPath = $(Q "$toolsDir\CraftWerk Manager.cmd"); `$s.WorkingDirectory = $(Q $toolsDir); `$s.Save()" }
+        }
+        if ($weeklyChange) {
+            $lines += "Write-Host 'Weekly updates...'"
+            $lines += "& $(Q "$toolsDir\setup-schedule.ps1") -SkipUpdate -NoRegister" + $(if (-not $chkWeekly.Checked) { ' -Remove' })
+        }
+        Start-Queue $lines 'Working... this can take a few minutes while apps download.'
     }
-    $weeklyChange = $chkWeekly.Checked -ne $State.TaskExists
-    if (-not ($installs -or $updates -or $weeklyChange)) {
-        if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Nothing to do. Tick an app that is not installed or has an update.', 'CraftWerk Manager') | Out-Null }
-        Add-Output "Nothing to do.`r`n"
-        return
-    }
-    Install-Tools
-    $lines = @("`$ErrorActionPreference = 'Continue'")
-    foreach ($id in $installs) {
-        $lines += "Write-Host 'Installing $($Catalog[$id].Name)...'"
-        $lines += "& '$updater' -Install '$id' -NoRegister"
-    }
-    if ($updates) {
-        $lines += "Write-Host 'Updating...'"
-        $lines += "& '$updater' -Apply -Only '$($updates -join "','")'"
-    }
-    if ($chkRegister.Checked) {
-        $lines += "Write-Host 'Setting up file types and shortcuts...'"
-        $lines += "& '$toolsDir\register-apps.ps1'"
-        if (-not $SelfTest) { $lines += "`$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'CraftWerk Manager.lnk')); `$s.TargetPath = '$toolsDir\CraftWerk Manager.cmd'; `$s.WorkingDirectory = '$toolsDir'; `$s.Save()" }
-    }
-    if ($weeklyChange) {
-        $lines += "Write-Host 'Weekly updates...'"
-        $lines += "& '$toolsDir\setup-schedule.ps1' -SkipUpdate -NoRegister" + $(if (-not $chkWeekly.Checked) { ' -Remove' })
-    }
-    Start-Queue $lines 'Working... this can take a few minutes while apps download.'
 })
 
 $btnRemove.Add_Click({
-    $ids = @(Get-Checked | Where-Object { $State.Info[$_].Installed })
-    if (-not $ids) { if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Tick the installed apps you want to remove.', 'CraftWerk Manager') | Out-Null }; return }
-    $answer = Confirm-Remove (($ids | ForEach-Object { $Catalog[$_].Name }) -join ', ')
-    if ($answer -eq 'Cancel') { return }
-    $keep = if ($answer -eq 'Yes') { ' -KeepData' } else { '' }
-    $reg = if ($chkRegister.Checked) { '' } else { ' -NoRegister' }
-    $lines = @("`$ErrorActionPreference = 'Continue'")
-    foreach ($id in $ids) { $lines += "& '$(Get-Updater)' -Uninstall '$id'$keep$reg" }
-    Start-Queue $lines 'Removing...'
+    Invoke-Safe {
+        $ids = @(Get-Checked | Where-Object { $State.Info[$_].Installed })
+        if (-not $ids) { if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Tick the installed apps you want to remove.', 'CraftWerk Manager') | Out-Null }; return }
+        $answer = Confirm-Remove (($ids | ForEach-Object { $Catalog[$_].Name }) -join ', ')
+        if ($answer -eq 'Cancel') { return }
+        $keep = if ($answer -eq 'Yes') { ' -KeepData' } else { '' }
+        $reg = if ($chkRegister.Checked) { '' } else { ' -NoRegister' }
+        Install-Tools     # run the scripts that came with this window, not an older installed copy
+        $lines = @("`$ErrorActionPreference = 'Continue'")
+        foreach ($id in $ids) { $lines += "& $(Q (Get-Updater)) -Uninstall '$id'$keep$reg" }
+        Start-Queue $lines 'Removing...'
+    }
 })
 
 $btnRollback.Add_Click({
-    $ids = @(Get-Checked | Where-Object { $State.Info[$_].Installed })
-    $withBackup = @($ids | Where-Object { Test-Path (Join-Path $State.Root "_update\previous\$_") })
-    if (-not $withBackup) {
-        $msg = 'None of the ticked apps has an older version saved. A version is saved each time an app is updated.'
-        if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show($msg, 'CraftWerk Manager') | Out-Null }
-        Add-Output "$msg`r`n"
-        return
+    Invoke-Safe {
+        $ids = @(Get-Checked | Where-Object { $State.Info[$_].Installed })
+        $withBackup = @($ids | Where-Object { Test-Path (Join-Path $State.Root "_update\previous\$_") })
+        if (-not $withBackup) {
+            $msg = 'None of the ticked apps has an older version saved. A version is saved each time an app is updated.'
+            if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show($msg, 'CraftWerk Manager') | Out-Null }
+            Add-Output "$msg`r`n"
+            return
+        }
+        Install-Tools
+        $lines = @("`$ErrorActionPreference = 'Continue'")
+        foreach ($id in $withBackup) { $lines += "& $(Q (Get-Updater)) -Rollback '$id'" }
+        Start-Queue $lines 'Rolling back...'
     }
-    $lines = @("`$ErrorActionPreference = 'Continue'")
-    foreach ($id in $withBackup) { $lines += "& '$(Get-Updater)' -Rollback '$id'" }
-    Start-Queue $lines 'Rolling back...'
 })
 
 $form.Add_FormClosing({
@@ -333,7 +383,7 @@ try {
     if ($SelfTest) {
         $form.Opacity = 0; $form.ShowInTaskbar = $false
         $form.Show()
-        Update-List
+        Invoke-Safe { Update-List }
         # a self-test must not touch the real file associations or the real weekly task
         $chkRegister.Checked = $false
         $chkWeekly.Checked = $false
@@ -357,7 +407,7 @@ try {
         foreach ($it in $list.Items) { Write-Host ("{0,-12} | {1}" -f $it.Text, $it.SubItems[1].Text) }
         $form.Close()
     } else {
-        $form.Add_Shown({ Update-List })
+        $form.Add_Shown({ Invoke-Safe { Update-List } })
         [void]$form.ShowDialog()
     }
 } catch {
