@@ -19,7 +19,7 @@
 # share/icons), so unpacking it into the prefix is the whole install. What was unpacked is recorded,
 # so removing or rolling back deletes exactly those files.
 
-VERSION="0.2.0"
+VERSION="0.2.1"
 OWNER="storytold"
 set -uo pipefail
 

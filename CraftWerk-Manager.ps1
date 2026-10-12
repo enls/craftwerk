@@ -33,7 +33,7 @@ $InInstall = (Split-Path $Here -Leaf) -eq '_update'
 $ToolsSrc  = if ($InInstall) { $Here } else { Join-Path $Here 'tools' }
 if (-not $Root) { $Root = if ($InInstall) { Split-Path $Here -Parent } else { 'C:\CraftWerk' } }
 
-$Version  = '0.2.0'
+$Version  = '0.2.1'
 $Owner    = 'storytold'
 $Headers  = @{ 'User-Agent' = 'craftwerk-manager' }
 $TaskName = 'CraftWerk updater'
