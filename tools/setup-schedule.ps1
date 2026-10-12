@@ -37,8 +37,19 @@ if ($Remove) {
 
 if (-not (Test-Path $Updater)) { throw "Can't find $Updater. Keep this script in the same folder as update-craftwerk.ps1." }
 
+# The task updates the apps next to this script's folder. With none there (say, run from an unzipped
+# download instead of the install folder), it would point the weekly update at nothing and replace
+# the task that was updating the real install, so stop before changing anything.
+$Root = Split-Path $PSScriptRoot -Parent
+$hasApps = Get-ChildItem $Root -Directory | Where-Object {
+    $_.Name -ne '_update' -and (Test-Path (Join-Path $_.FullName "$($_.Name.ToLower()).exe"))
+}
+if (-not $hasApps) {
+    throw "No Craft apps found in $Root, so nothing was changed. Run this from the _update folder inside your CraftWerk folder, or use CraftWerk Setup.cmd to install apps."
+}
+
 # files copied from a download or a zip are marked "from the internet"; clear that so they run
-Get-ChildItem (Split-Path $PSScriptRoot -Parent) -Recurse -File | Unblock-File
+Get-ChildItem $Root -Recurse -File | Unblock-File
 
 $action   = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Updater`" -Apply -Scheduled"
 $trigger  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Day -At $At
@@ -48,8 +59,8 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatt
 
 # -Force replaces an existing task of the same name (e.g. after moving the folder)
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-Write-Host "'$TaskName' will run every $Day at $At, updating the apps in $(Split-Path $PSScriptRoot -Parent)."
-Write-Host "Log: $(Join-Path $PSScriptRoot 'update.log')"
+Write-Host "'$TaskName' will run every $Day at $At, updating the apps in $Root."
+Write-Host "Log: $(Join-Path $Root '_update\update.log')"
 
 # register the apps with Windows: file types, Default apps, Start menu
 if (-not $NoRegister) { & $Register }

@@ -285,6 +285,13 @@ if ($Verify) {
 # ---- Update ---------------------------------------------------------------------------------
 Log ('--- {0}{1} ---' -f $(if ($Apply) { 'update run' } else { 'dry run (add -Apply to install)' }), $(if ($IsRetry) { ' (retry)' } elseif ($Scheduled) { ' (scheduled)' }))
 
+$installed = @(Get-InstalledApps)
+if (-not $installed) {
+    # most likely run from the wrong folder (e.g. an unzipped download), not the install folder
+    Log "no Craft apps found in $Root. Nothing checked."
+    exit 1
+}
+
 if ($Scheduled) {
     # a weekly run replaces any retry still pending from last time
     if (-not $IsRetry) { Unregister-ScheduledTask -TaskName $RetryTaskName -Confirm:$false -ErrorAction SilentlyContinue }
@@ -303,7 +310,7 @@ if (-not (Test-Online)) {
     exit 1
 }
 
-foreach ($a in Get-InstalledApps) {
+foreach ($a in $installed) {
     if ($Only -and $a.Name -notin $Only) { continue }
     try {
         $latest = Get-Latest $a.Name

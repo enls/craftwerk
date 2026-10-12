@@ -91,6 +91,17 @@ function Get-AppExe($id) {
     if (Test-Path $exe) { return $exe }
 }
 
+# The .exe an app is registered to now (from App Paths), or $null if it isn't registered.
+function Get-RegisteredExe($id) {
+    $key = Get-ItemProperty -LiteralPath "$AppPaths\$id.exe" -ErrorAction SilentlyContinue
+    if ($key) { return $key.'(default)' }
+}
+
+# True if $path is inside this CraftWerk folder.
+function Test-InRoot($path) {
+    $path -and $path.StartsWith($Root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+}
+
 function Unregister-App($id, $app) {
     foreach ($t in $app.Types) {
         Remove-Item "$Classes\$($t.ProgId)" -Recurse -Force -ErrorAction SilentlyContinue
@@ -119,14 +130,23 @@ if ($Remove) {
 }
 
 $shell = New-Object -ComObject WScript.Shell
+$found = 0
 foreach ($id in $Ids) {
     $app = $Apps[$id]
     $exe = Get-AppExe $id
     if (-not $exe) {
-        # not in the folder (any more): clear anything left from an earlier registration
+        # Not in this folder (any more): clear what an earlier registration from this folder left.
+        # A registration pointing at another folder belongs to another copy (e.g. this script run
+        # from an unzipped download), so leave it alone.
+        $registered = Get-RegisteredExe $id
+        if ($registered -and -not (Test-InRoot $registered)) {
+            if ($Only) { Write-Host ("{0,-12} not in {1}; left registered to {2}" -f $app.Name, $Root, $registered) }
+            continue
+        }
         Unregister-App $id $app
         continue
     }
+    $found++
     $open = "`"$exe`" `"%1`""
     $cap  = "HKCU:\$CapBase\$($app.Name)\Capabilities"
     Add-Key "$cap\FileAssociations"
@@ -167,6 +187,7 @@ foreach ($id in $Ids) {
 
     Write-Host ("{0,-12} {1,2} file types" -f $app.Name, $count)
 }
+if (-not $Only -and -not $found) { Write-Host "No Craft apps found in $Root; nothing registered." }
 
 [Win32.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 Write-Host 'Done. Pick defaults in Settings > Apps > Default apps.'

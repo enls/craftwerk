@@ -49,6 +49,8 @@ weekly task runs them from.
   (settings, your own files) is left alone.
 - No internet: one retry two hours later, then the next weekly run.
 - Only installed apps are ever checked for updates.
+- Setup run from a folder with no Craft apps in it (say, an unzipped download) stops without
+  changing anything, and registering from such a folder leaves alone apps registered elsewhere.
 
 ## Testing
 
