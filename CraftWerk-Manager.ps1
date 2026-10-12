@@ -3,7 +3,7 @@
   A window for installing, updating, rolling back and removing the Craft apps.
 
 .DESCRIPTION
-  Pick apps from the list and press Install / update. Apps come straight from each project's latest
+  Pick apps from the list and click Install / update. Apps come straight from each project's latest
   GitHub release, checked against its published checksums. Everything the window does is done by
   the scripts next to it (update-craftwerk.ps1, register-apps.ps1, setup-schedule.ps1); it only
   chooses what to run and shows the output.
@@ -11,7 +11,7 @@
   Run from a package folder (with a tools\ folder beside this file) it installs those scripts, and
   itself, into <install folder>\_update. Run from there, it manages that install.
 
-  -SelfTest builds the window without showing it, loads the list, optionally ticks and runs the
+  -SelfTest builds the window without showing it, loads the list, optionally checks and runs the
   given apps, prints what happened and exits. It's how the window is checked without a person.
 #>
 param(
@@ -223,9 +223,9 @@ function Update-List {
         $State.TaskExists = Test-TaskForThisFolder
         $chkWeekly.Checked = $State.TaskExists -or -not (Test-Path ([IO.Path]::Combine($State.Root, '_update')))
         $updates = @($State.Info.Values | Where-Object Update).Count
-        if ($updates) { $message = "$updates update(s) available, ticked in the list." }
+        if ($updates) { $message = "$updates update(s) available, checked in the list." }
     } finally {
-        # whatever happened above, don't leave every button greyed out
+        # whatever happened above, don't leave every button grayed out
         Set-Busy $false $message
     }
 }
@@ -313,7 +313,7 @@ $btnGo.Add_Click({
         }
         $weeklyChange = $chkWeekly.Checked -ne $State.TaskExists
         if (-not ($installs -or $updates -or $weeklyChange)) {
-            if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Nothing to do. Tick an app that is not installed or has an update.', 'CraftWerk Manager') | Out-Null }
+            if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Nothing to do. Check an app that is not installed or has an update.', 'CraftWerk Manager') | Out-Null }
             Add-Output "Nothing to do.`r`n"
             return
         }
@@ -343,7 +343,7 @@ $btnGo.Add_Click({
 $btnRemove.Add_Click({
     Invoke-Safe {
         $ids = @(Get-Checked | Where-Object { $State.Info[$_].Installed })
-        if (-not $ids) { if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Tick the installed apps you want to remove.', 'CraftWerk Manager') | Out-Null }; return }
+        if (-not $ids) { if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show('Check the installed apps you want to remove.', 'CraftWerk Manager') | Out-Null }; return }
         $answer = Confirm-Remove (($ids | ForEach-Object { $Catalog[$_].Name }) -join ', ')
         if ($answer -eq 'Cancel') { return }
         $keep = if ($answer -eq 'Yes') { ' -KeepData' } else { '' }
@@ -360,7 +360,7 @@ $btnRollback.Add_Click({
         $ids = @(Get-Checked | Where-Object { $State.Info[$_].Installed })
         $withBackup = @($ids | Where-Object { Test-Path (Join-Path $State.Root "_update\previous\$_") })
         if (-not $withBackup) {
-            $msg = 'None of the ticked apps has an older version saved. A version is saved each time an app is updated.'
+            $msg = 'None of the checked apps has an older version saved. A version is saved each time an app is updated.'
             if (-not $SelfTest) { [Windows.Forms.MessageBox]::Show($msg, 'CraftWerk Manager') | Out-Null }
             Add-Output "$msg`r`n"
             return

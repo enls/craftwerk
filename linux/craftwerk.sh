@@ -363,12 +363,12 @@ Persistent=true
 WantedBy=timers.target
 EOF
             systemctl --user daemon-reload && systemctl --user enable --now craftwerk-update.timer >/dev/null 2>&1
-            log "weekly updates on (systemd timer, Sundays 10:00; a missed run happens at your next login)"
+            log "weekly updates on (systemd timer, Sundays at 10 AM; a missed run happens at your next login)"
             echo "Tip: 'loginctl enable-linger $USER' lets it run even when you're logged out."
         else
             need crontab
             ( crontab -l 2>/dev/null | grep -v 'craftwerk.sh update --scheduled'; echo "0 10 * * 0 CRAFTWERK_PREFIX=$PREFIX /usr/bin/env bash $self update --scheduled" ) | crontab -
-            log "weekly updates on (cron, Sundays 10:00; cron doesn't catch up a missed run)"
+            log "weekly updates on (cron, Sundays at 10 AM; cron doesn't catch up a missed run)"
         fi ;;
     off)
         if systemd_ok; then systemctl --user disable --now craftwerk-update.timer >/dev/null 2>&1; rm -f "$unitdir"/craftwerk-update.{service,timer}; systemctl --user daemon-reload; fi
@@ -390,7 +390,7 @@ picker() {   # picker TITLE ID... -> prints the chosen ids. Each id shows "Name 
     local id v items=() n=0 chosen
     if [ -n "$ui" ]; then
         for id in "$@"; do v=$(installed_version "$id"); items+=("$id" "$(field "$id" 2)  ${v:+(installed $v)}" OFF); done
-        chosen=$("$ui" --title "$title" --checklist "Space to tick, Enter to continue" 22 70 12 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
+        chosen=$("$ui" --title "$title" --checklist "Space to select, Enter to continue" 22 70 12 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
         printf '%s\n' $chosen | tr -d '"'
     else
         echo "$title"; for id in "$@"; do n=$((n+1)); v=$(installed_version "$id"); printf '  %2d) %-12s %s\n' "$n" "$(field "$id" 2)" "${v:+installed $v}"; done

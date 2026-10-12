@@ -5,16 +5,16 @@ Installs and keeps up to date the open-source "Craft" apps (PhotoCraft, VectorCr
 WordCraft, GridCraft, DeckCraft, DesignCraft, EffectCraft, FilmCraft, SoundCraft, CadCraft, PdfCraft).
 
 TO INSTALL
-  1. Right-click the zip you downloaded > Properties > tick "Unblock" > OK. (This skips a Windows
+  1. Right-click the zip you downloaded > Properties > check "Unblock" > OK. (This skips a Windows
      security warning. If you didn't, just click through it.)
   2. Right-click the zip > Extract All. Put the folder anywhere that isn't OneDrive or Desktop.
   3. Double-click "CraftWerk Setup.cmd".
-  4. Tick the apps you want and press "Install / update checked".
+  4. Check the apps you want and click "Install / update checked".
 
 The apps are downloaded straight from each project's own GitHub page, and each download is checked
 against the checksum the project publishes. If a check fails, that app is skipped.
 
-Leave the two boxes ticked unless you know you don't want them:
+Leave the two boxes checked unless you know you don't want them:
   - "Set up file types and Start menu shortcuts" lets you open files in the apps (double-click, or
     right-click > Open with) and finds them from the Start menu.
   - "Check for updates every week" updates the apps by itself on Sundays at 10am.
